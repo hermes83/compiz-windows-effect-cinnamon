@@ -103,7 +103,7 @@ class CompizWindowsEffectExtension {
                 effect.destroy();
             }
     
-            effect = new WobblyEffect();
+            effect = new WobblyEffect('move');
             actor.add_effect_with_name(this.EFFECT_NAME, effect);
         }
     }
@@ -118,7 +118,15 @@ class CompizWindowsEffectExtension {
         }
     }
     
-    onUnmaximize(shellwm, actor) {}
+    onUnmaximize(shellwm, actor) {
+        if (actor) {
+            let effect = actor.get_effect(this.EFFECT_NAME);
+            if (!effect) {
+                effect = new WobblyEffect('unmaximized');
+                actor.add_effect_with_name(this.EFFECT_NAME, effect);   
+            }
+        }
+    }
     
     onMaximize(shellwm, actor) {
         if (actor) {
@@ -126,6 +134,8 @@ class CompizWindowsEffectExtension {
             if (effect) {
                 effect.destroy();
             }
+
+            actor.add_effect_with_name(this.EFFECT_NAME, new WobblyEffect('maximized'));
         }
     }
     
@@ -135,6 +145,8 @@ class CompizWindowsEffectExtension {
             if (effect) {
                 effect.destroy();
             }
+
+            actor.add_effect_with_name(this.EFFECT_NAME, new WobblyEffect('maximized'));
         }
     }
 }
@@ -143,8 +155,9 @@ const WobblyEffect = new Lang.Class({
     Name: 'WobblyEffect',
     Extends: Clutter.DeformEffect,
 
-    _init: function(params) {
-        this.parent(params);
+    _init: function(op) {
+        this.parent();
+        this.operationType = op;
         
         this.paintEvent = null;
         this.moveEvent = null;
@@ -172,8 +185,8 @@ const WobblyEffect = new Lang.Class({
         this.SPRING_K = extension.settings.springK;            
         this.SPEEDUP_FACTOR = extension.settings.speedupFactorDivider;
         this.MASS = extension.settings.mass;
-        this.X_TILES = extension.settings.xTiles;
-        this.Y_TILES = extension.settings.yTiles;
+        this.X_TILES = 'maximized' == this.operationType ? 10 : extension.settings.xTiles;
+        this.Y_TILES = 'maximized' == this.operationType ? 10 : extension.settings.yTiles;
 
         this.set_n_tiles(this.X_TILES, this.Y_TILES);
         
@@ -189,16 +202,6 @@ const WobblyEffect = new Lang.Class({
             [this.newX, this.newY] = [actor.get_x(), actor.get_y()];
             [this.oldX, this.oldY] = [this.newX, this.newY];
             [this.mouseX, this.mouseY] = global.get_pointer();
-
-            this.wobblyModel = new WobblyModel({
-                friction: this.FRICTION, 
-                springK: this.SPRING_K,
-                mass: this.MASS,
-                positionX: this.newX, 
-                positionY: this.newY, 
-                sizeX: this.width, 
-                sizeY: this.height
-            });
 
             this.tilesX = this.X_TILES + 0.1;
             this.tilesY = this.Y_TILES + 0.1;
@@ -238,9 +241,21 @@ const WobblyEffect = new Lang.Class({
                 }
             }
 
-            this.wobblyModel.grab(this.mouseX - this.newX, this.mouseY - this.newY);
-            this.moveEvent = actor.connect('allocation-changed', Lang.bind(this, this.on_move_event));
-            this.resizedEvent = actor.connect('notify::size', Lang.bind(this, this.on_resized_event));
+
+            this.wobblyModel = new WobblyModel({ friction: this.FRICTION, springK: this.SPRING_K, mass: this.MASS, sizeX: this.width, sizeY: this.height });
+
+            if ('unmaximized' == this.operationType) {
+                this.wobblyModel.unmaximize();
+                this.ended = true;
+            } else if ('maximized' == this.operationType) {                    
+                this.wobblyModel.maximize();
+                this.ended = true;
+            } else {
+                this.wobblyModel.grab(this.mouseX - this.newX, this.mouseY - this.newY);
+                this.moveEvent = actor.connect('allocation-changed', Lang.bind(this, this.on_move_event));
+                this.resizedEvent = actor.connect('notify::size', Lang.bind(this, this.on_resized_event));
+            }
+            
             this.paintEvent = actor.connect('paint', () => {});
 
             this.timerId = new Clutter.Timeline({duration: this.CLUTTER_TIMELINE_DURATION});
@@ -420,26 +435,17 @@ const WobblyEffect = new Lang.Class({
 
 class Obj {
     constructor(forceX, forceY, positionX, positionY, velocityX, velocityY, immobile) {
-        this.forceX = forceX;
-        this.forceY = forceY;
-        this.x = positionX;
-        this.y = positionY;
-        this.velocityX = velocityX;
-        this.velocityY = velocityY;
-        this.immobile = immobile;
+        [this.forceX, this.forceY, this.x, this.y, this.velocityX, this.velocityY, this.immobile] = [forceX, forceY, positionX, positionY, velocityX, velocityY, immobile];
     }    
 }
 
 class Spring {
     constructor(a, b, offsetX, offsetY) {
-        this.a = a;
-        this.b = b;
-        this.offsetX = offsetX;
-        this.offsetY = offsetY;
+        [this.a, this.b, this.offsetX, this.offsetY] = [a, b, offsetX, offsetY];
     }
 }
 
-var WobblyModel = class WobblyModel {
+class WobblyModel {
     constructor(config) {
         this.GRID_WIDTH = 4;
         this.GRID_HEIGHT = 4;
@@ -447,15 +453,12 @@ var WobblyModel = class WobblyModel {
         this.objects = new Array(this.GRID_WIDTH * this.GRID_HEIGHT);
         this.numObjects = this.GRID_WIDTH * this.GRID_HEIGHT;
         this.springs = new Array(this.GRID_WIDTH * this.GRID_HEIGHT);
-        this.numSprings = 0;
         this.velocitySum = 0;
         this.forceSum = 0;
         this.steps = 0;
         this.vertex_count = 0;
         this.immobileObjects = [];
     
-        this.x = config.positionX;
-        this.y = config.positionY;
         this.width = config.sizeX;
         this.height = config.sizeY;
         this.friction = config.friction;
@@ -472,37 +475,26 @@ var WobblyModel = class WobblyModel {
     }
 
     initObjects() {
-        var gridY, gridX;
-        var i = 0;    
-        var gw = this.GRID_WIDTH - 1;
-        var gh = this.GRID_HEIGHT - 1;
+        var i = 0, gridY, gridX, gw = this.GRID_WIDTH - 1, gh = this.GRID_HEIGHT - 1;
     
         for (gridY = 0; gridY < this.GRID_HEIGHT; gridY++) {
             for (gridX = 0; gridX < this.GRID_WIDTH; gridX++) {
-                this.objects[i] = new Obj(0, 0, (gridX * this.width) / gw, (gridY * this.height) / gh, 0, 0, false);
-                i++;
+                this.objects[i++] = new Obj(0, 0, gridX * this.width / gw, gridY * this.height / gh, 0, 0, false);
             }
         }
     }
 
     initSprings() {
-        var gridY, gridX;
-        var i = 0;    
-        var hpad = this.width / (this.GRID_WIDTH - 1);
-        var vpad = this.height / (this.GRID_HEIGHT - 1);
-        
-        this.numSprings = 0;
+        var i = 0, numSprings = 0, gridY, gridX, hpad = this.width / (this.GRID_WIDTH - 1), vpad = this.height / (this.GRID_HEIGHT - 1);
     
         for (gridY = 0; gridY < this.GRID_HEIGHT; gridY++) {
             for (gridX = 0; gridX < this.GRID_WIDTH; gridX++) {
                 if (gridX > 0) {
-                    this.springs[this.numSprings] = new Spring(this.objects[i - 1], this.objects[i], hpad, 0);
-                    this.numSprings++;
+                    this.springs[numSprings++] = new Spring(this.objects[i - 1], this.objects[i], hpad, 0);
                 }
     
                 if (gridY > 0) {
-                    this.springs[this.numSprings] = new Spring(this.objects[i - this.GRID_WIDTH], this.objects[i], 0, vpad);
-                    this.numSprings++;
+                    this.springs[numSprings++] = new Spring(this.objects[i - this.GRID_WIDTH], this.objects[i], 0, vpad);
                 }
     
                 i++;
@@ -511,44 +503,27 @@ var WobblyModel = class WobblyModel {
     }
 
     updateObjects() {
-        var gridY, gridX;
-        var i = 0;    
-        var gw = this.GRID_WIDTH - 1;
-        var gh = this.GRID_HEIGHT - 1;
-    
+        var i = 0, gridY, gridX, gw = this.GRID_WIDTH - 1, gh = this.GRID_HEIGHT - 1;
+
         for (gridY = 0; gridY < this.GRID_HEIGHT; gridY++) {
             for (gridX = 0; gridX < this.GRID_WIDTH; gridX++) {
-                this.objects[i].x = (gridX * this.width) / gw;
-                this.objects[i].y = (gridY * this.height) / gh;
-
-                this.objects[i].velocityX = 0.0;
-                this.objects[i].velocityY = 0.0;
-
-                this.objects[i].forceX = 0.0;
-                this.objects[i].forceY = 0.0;
-
+                [this.objects[i].x, this.objects[i].y, this.objects[i].velocityX, this.objects[i].velocityY, this.objects[i].forceX, this.objects[i].forceY] = [gridX * this.width / gw, gridY * this.height / gh, 0, 0, 0, 0];
                 i++;
             }
         }
     }
 
     nearestObject(x, y) {
-        var dx = 0;
-        var dy = 0;
-        var distance = 0;
-        var minDistance = 0;
-        var result = null;
+        var dx = 0, dy = 0, distance = 0, minDistance = 0, result = null;
 
-        for (const object of this.objects) {
-            dx = object.x - x;
-            dy = object.y - y;
+        this.objects.forEach(object => {
+            [dx, dy] = [object.x - x, object.y - y];
             distance = Math.sqrt(dx * dx + dy * dy);
     
             if (!result || distance < minDistance) {
-                minDistance = distance;
-                result = object;
+                [minDistance, result] = [distance, object];
             }
-        }
+        });
 
         return result;
     }
@@ -560,27 +535,19 @@ var WobblyModel = class WobblyModel {
     }
 
     maximize() {
-        var intensity = 0.05;
+        var intensity = 0.8;
+
+        var topLeft = this.nearestObject(0, 0), topRight = this.nearestObject(this.width, 0), bottomLeft = this.nearestObject(0, this.height), bottomRight = this.nearestObject(this.width, this.height);
+        [topLeft.immobile, topRight.immobile, bottomLeft.immobile, bottomRight.immobile] = [true, true, true, true];
+
+        this.immobileObjects = [topLeft, topRight, bottomLeft, bottomRight];
+
         this.friction *= 2;
         if (this.friction > 10) {
             this.friction = 10;
         }
 
-        var topLeft = this.nearestObject(0, 0);
-        topLeft.immobile = true;
-
-        var topRight = this.nearestObject(this.width, 0);
-        topRight.immobile = true;
-
-        var bottomLeft = this.nearestObject(0, this.height);
-        bottomLeft.immobile = true;
-        
-        var bottomRight = this.nearestObject(this.width, this.height);
-        bottomRight.immobile = true;
-
-        this.immobileObjects = [topLeft,topRight,bottomLeft,bottomRight];
-
-        for (const spring of this.springs) {
+        this.springs.forEach(spring => {
             if (spring.a == topLeft) {
                 spring.b.velocityX -= spring.offsetX * intensity;
                 spring.b.velocityY -= spring.offsetY * intensity;
@@ -606,23 +573,24 @@ var WobblyModel = class WobblyModel {
                 spring.a.velocityX -= spring.offsetX * intensity;
                 spring.a.velocityY -= spring.offsetY * intensity;
             }
-        }
-        
+        });
+
         this.step(0);
     }
 
     unmaximize() {
-        var intensity = 0.05;
-        this.friction *= 2;
-        if (this.friction > 10) {
-            this.friction = 10;
-        }
+        var intensity = 0.8;
 
         var immobileObject = this.nearestObject(this.width / 2, this.height / 2);
         immobileObject.immobile = true;
         this.immobileObjects = [immobileObject];
 
-        for (const spring of this.springs) {
+        this.friction *= 2;
+        if (this.friction > 10) {
+            this.friction = 10;
+        }
+
+        this.springs.forEach(spring => {
             if (spring.a == immobileObject) {
                 spring.b.velocityX -= spring.offsetX * intensity;
                 spring.b.velocityY -= spring.offsetY * intensity;
@@ -630,78 +598,52 @@ var WobblyModel = class WobblyModel {
                 spring.a.velocityX -= spring.offsetX * intensity;
                 spring.a.velocityY -= spring.offsetY * intensity;
             }
-        }
+        });
         
         this.step(0);
     }
 
     step(steps) {
-        var velocitySum = 0.0;
-        var forceSum = 0.0;
+        var velocitySum = 0;
+        var forceSum = 0;
 
-        if (steps >= 0) {
-            for (var j = 0; j <= steps; j++) {
-                for (const spring of this.springs) {
-                    spring.a.forceX += this.springK * (spring.b.x - spring.a.x - spring.offsetX);
-                    spring.a.forceY += this.springK * (spring.b.y - spring.a.y - spring.offsetY);
-                    
-                    spring.b.forceX -= this.springK * (spring.b.x - spring.a.x - spring.offsetX);
-                    spring.b.forceY -= this.springK * (spring.b.y - spring.a.y - spring.offsetY);
-                }
-        
-                for (const object of this.objects) {
-                    if (object.immobile) {
-                        object.velocityX = 0.0;
-                        object.velocityY = 0.0;
-        
-                        object.forceX = 0.0;
-                        object.forceY = 0.0;
+        for (var j = 0; j <= steps; j++) {
+            this.springs.forEach(spring => {
+                spring.a.forceX += this.springK * (spring.b.x - spring.a.x - spring.offsetX);
+                spring.a.forceY += this.springK * (spring.b.y - spring.a.y - spring.offsetY);
+                spring.b.forceX -= this.springK * (spring.b.x - spring.a.x - spring.offsetX);
+                spring.b.forceY -= this.springK * (spring.b.y - spring.a.y - spring.offsetY);
+            });
+
+            this.objects.forEach(object => {
+                if (object.immobile) {
+                    [object.velocityX, object.velocityY, object.forceX, object.forceY] = [0, 0, 0, 0];
+                } else {
+                    object.forceX -= this.friction * object.velocityX;
+                    object.forceY -= this.friction * object.velocityY;
+                    object.velocityX += object.forceX / this.mass;
+                    object.velocityY += object.forceY / this.mass;
+                    object.x += object.velocityX; 
+                    object.y += object.velocityY; 
+
+                    velocitySum += Math.abs(object.velocityX) + Math.abs(object.velocityY);
+                    forceSum += Math.abs(object.forceX) + Math.abs(object.forceY);
     
-                    } else {
-                        object.forceX -= this.friction * object.velocityX;
-                        object.forceY -= this.friction * object.velocityY;
-        
-                        object.velocityX += object.forceX / this.mass;
-                        object.velocityY += object.forceY / this.mass;
-        
-                        object.x += object.velocityX; 
-                        object.y += object.velocityY; 
-    
-                        velocitySum += Math.abs(object.velocityX) + Math.abs(object.velocityY);
-                        forceSum += Math.abs(object.forceX) + Math.abs(object.forceY);
-        
-                        object.forceX = 0.0;
-                        object.forceY = 0.0;
-                    }
+                    [object.forceX, object.forceY] = [0, 0];
                 }
-            }
+            });
         }
 
-        this.velocitySum = velocitySum;
-        this.forceSum = forceSum;
+        [this.velocitySum, this.forceSum] = [velocitySum, forceSum];
     }
 
     move(deltaX, deltaY) {
-        this.x += deltaX;
-        this.y += deltaY;
-
         this.immobileObjects[0].x += deltaX;
         this.immobileObjects[0].y += deltaY;
     }
 
-    maximizeTransaction(deltaX, deltaY) {
-        this.x += deltaX;
-        this.y += deltaY;
-
-        for (const object of this.immobileObjects) {
-            object.x += deltaX;
-            object.y += deltaY;
-        }
-    }
-
     resize(sizeX, sizeY) {
-        this.width = sizeX;
-        this.height = sizeY;
+        [this.width, this.height] = [sizeX, sizeY];
 
         this.updateObjects();
         this.initSprings();
