@@ -23,6 +23,7 @@
  */
 
 const Lang = imports.lang;
+const Meta = imports.gi.Meta;
 const Clutter = imports.gi.Clutter;
 const Settings = imports.ui.settings;
 
@@ -96,58 +97,80 @@ class CompizWindowsEffectExtension {
     }
 
     onBeginGrabOp(display, screen, window, op) {
-        let actor = window.get_compositor_private();
-        if (actor) {
-            let effect = actor.get_effect(this.EFFECT_NAME);
-            if (effect) {
-                effect.destroy();
-            }
-    
-            effect = new WobblyEffect('move');
-            actor.add_effect_with_name(this.EFFECT_NAME, effect);
+        if (op != Meta.GrabOp.MOVING) {
+            return;
         }
+
+        let actor = window.get_compositor_private();
+        if (!actor) {
+            return;
+        }
+
+        let effect = actor.get_effect(this.EFFECT_NAME);
+        if (effect) {
+            effect.destroy();
+        }
+
+        effect = new WobblyEffect('move');
+        actor.add_effect_with_name(this.EFFECT_NAME, effect);
     }
     
     onEndGrabOp(display, screen, window, op) {
+        if (op != Meta.GrabOp.MOVING) {
+            return;
+        }
+
         let actor = window.get_compositor_private();
-        if (actor) {
-            let effect = actor.get_effect(this.EFFECT_NAME);
-            if (effect) {
-                effect.on_end_event(actor);
-            }
+        if (!actor) {
+            return;
+        }
+
+        let effect = actor.get_effect(this.EFFECT_NAME);
+        if (effect) {
+            effect.on_end_event(actor);
         }
     }
     
     onUnmaximize(shellwm, actor) {
-        if (actor) {
-            let effect = actor.get_effect(this.EFFECT_NAME);
-            if (!effect) {
-                effect = new WobblyEffect('unmaximized');
-                actor.add_effect_with_name(this.EFFECT_NAME, effect);   
+        if (!actor) {
+            return;
+        }
+
+        let effect = actor.get_effect(this.EFFECT_NAME);
+        if (!effect || effect.ended) {
+            if (effect) {
+                effect.destroy();
             }
+            
+            effect = new WobblyEffect('unmaximized');
+            actor.add_effect_with_name(this.EFFECT_NAME, effect);   
         }
     }
     
     onMaximize(shellwm, actor) {
-        if (actor) {
-            let effect = actor.get_effect(this.EFFECT_NAME);
-            if (effect) {
-                effect.destroy();
-            }
-
-            actor.add_effect_with_name(this.EFFECT_NAME, new WobblyEffect('maximized'));
+        if (!actor) {
+            return;
         }
+
+        let effect = actor.get_effect(this.EFFECT_NAME);
+        if (effect) {
+            effect.destroy();
+        }
+
+        actor.add_effect_with_name(this.EFFECT_NAME, new WobblyEffect('maximized'));
     }
     
     onTile(shellwm, actor) {
-        if (actor) {
-            let effect = actor.get_effect(this.EFFECT_NAME);
-            if (effect) {
-                effect.destroy();
-            }
-
-            actor.add_effect_with_name(this.EFFECT_NAME, new WobblyEffect('maximized'));
+        if (!actor) {
+            return;
         }
+
+        let effect = actor.get_effect(this.EFFECT_NAME);
+        if (effect) {
+            effect.destroy();
+        }
+
+        actor.add_effect_with_name(this.EFFECT_NAME, new WobblyEffect('maximized'));
     }
 }
 
@@ -336,7 +359,7 @@ const WobblyEffect = new Lang.Class({
                 this.destroy();
                 return;
             }
-            if (this.wobblyModel.velocitySum < 10 && this.wobblyModel.forceSum < 10) {
+            if (!this.wobblyModel.movement) {
                 this.destroy();
                 return;
             }
@@ -432,7 +455,6 @@ const WobblyEffect = new Lang.Class({
  *
  * Spring model implemented by Kristian Hogsberg.
  */
-
 class Obj {
     constructor(forceX, forceY, positionX, positionY, velocityX, velocityY, immobile) {
         [this.forceX, this.forceY, this.x, this.y, this.velocityX, this.velocityY, this.immobile] = [forceX, forceY, positionX, positionY, velocityX, velocityY, immobile];
@@ -453,8 +475,7 @@ class WobblyModel {
         this.objects = new Array(this.GRID_WIDTH * this.GRID_HEIGHT);
         this.numObjects = this.GRID_WIDTH * this.GRID_HEIGHT;
         this.springs = new Array(this.GRID_WIDTH * this.GRID_HEIGHT);
-        this.velocitySum = 0;
-        this.forceSum = 0;
+        this.movement = false;
         this.steps = 0;
         this.vertex_count = 0;
         this.immobileObjects = [];
@@ -517,11 +538,13 @@ class WobblyModel {
         var dx = 0, dy = 0, distance = 0, minDistance = 0, result = null;
 
         this.objects.forEach(object => {
-            [dx, dy] = [object.x - x, object.y - y];
+            dx = object.x - x;
+            dy = object.y - y;
             distance = Math.sqrt(dx * dx + dy * dy);
     
             if (!result || distance < minDistance) {
-                [minDistance, result] = [distance, object];
+                minDistance = distance;
+                result = object;
             }
         });
 
@@ -604,37 +627,38 @@ class WobblyModel {
     }
 
     step(steps) {
-        var velocitySum = 0;
-        var forceSum = 0;
+        var movement = false;
+        var spring;
+        var object;
 
         for (var j = 0; j <= steps; j++) {
-            this.springs.forEach(spring => {
+            for (var i = this.springs.length - 1; i >= 0; --i) {
+                spring = this.springs[i];
                 spring.a.forceX += this.springK * (spring.b.x - spring.a.x - spring.offsetX);
                 spring.a.forceY += this.springK * (spring.b.y - spring.a.y - spring.offsetY);
                 spring.b.forceX -= this.springK * (spring.b.x - spring.a.x - spring.offsetX);
                 spring.b.forceY -= this.springK * (spring.b.y - spring.a.y - spring.offsetY);
-            });
+            }
 
-            this.objects.forEach(object => {
-                if (object.immobile) {
-                    [object.velocityX, object.velocityY, object.forceX, object.forceY] = [0, 0, 0, 0];
-                } else {
+            for (var i = this.objects.length - 1; i >= 0; --i) {
+                object = this.objects[i];
+                if (!object.immobile) {
                     object.forceX -= this.friction * object.velocityX;
                     object.forceY -= this.friction * object.velocityY;
                     object.velocityX += object.forceX / this.mass;
                     object.velocityY += object.forceY / this.mass;
                     object.x += object.velocityX; 
-                    object.y += object.velocityY; 
+                    object.y += object.velocityY;
 
-                    velocitySum += Math.abs(object.velocityX) + Math.abs(object.velocityY);
-                    forceSum += Math.abs(object.forceX) + Math.abs(object.forceY);
+                    movement |= Math.abs(object.velocityX) > 5 || Math.abs(object.velocityY) > 5 || Math.abs(object.forceX) > 5 || Math.abs(object.forceY) > 5;
     
-                    [object.forceX, object.forceY] = [0, 0];
+                    object.forceX = 0;
+                    object.forceY = 0;
                 }
-            });
+            }
         }
 
-        [this.velocitySum, this.forceSum] = [velocitySum, forceSum];
+        this.movement = movement;
     }
 
     move(deltaX, deltaY) {
@@ -643,7 +667,8 @@ class WobblyModel {
     }
 
     resize(sizeX, sizeY) {
-        [this.width, this.height] = [sizeX, sizeY];
+        this.width = sizeX;
+        this.height = sizeY;
 
         this.updateObjects();
         this.initSprings();
