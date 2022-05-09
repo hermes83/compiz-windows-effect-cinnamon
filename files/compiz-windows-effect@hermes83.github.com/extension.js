@@ -27,13 +27,15 @@ const Meta = imports.gi.Meta;
 const Clutter = imports.gi.Clutter;
 const Settings = imports.ui.settings;
 
+let settings;
 let extension;
 
 function init(metadata) {
-    extension = new CompizWindowsEffectExtension(metadata);
+    settings = new SettingsHandler(metadata.uuid);
 }
 
 function enable() {
+    extension = new CompizWindowsEffectExtension();
     if (extension) {
         extension.enable();
     }
@@ -42,6 +44,7 @@ function enable() {
 function disable() {
     if (extension) {
         extension.disable();
+        extension = null;
     }
 }
 
@@ -58,10 +61,9 @@ class SettingsHandler {
 }
 
 class CompizWindowsEffectExtension {
-    constructor(metadata) {
+    constructor() {
         this.EFFECT_NAME = 'wobbly-compiz-effect';
 
-        this.settings = new SettingsHandler(metadata.uuid);
         this.beginGrabOpId = null;
         this.endGrabOpId = null;
         this.resizeOpId = null;
@@ -204,12 +206,12 @@ const WobblyEffect = new Lang.Class({
         this.tilesY = 0;
         
         this.CLUTTER_TIMELINE_DURATION = 1000 * 1000;
-        this.FRICTION = extension.settings.friction;
-        this.SPRING_K = extension.settings.springK;            
-        this.SPEEDUP_FACTOR = extension.settings.speedupFactorDivider;
-        this.MASS = extension.settings.mass;
-        this.X_TILES = 'maximized' == this.operationType ? 10 : extension.settings.xTiles;
-        this.Y_TILES = 'maximized' == this.operationType ? 10 : extension.settings.yTiles;
+        this.FRICTION = settings.friction;
+        this.SPRING_K = settings.springK;            
+        this.SPEEDUP_FACTOR = settings.speedupFactorDivider;
+        this.MASS = settings.mass;
+        this.X_TILES = 'maximized' == this.operationType ? 10 : settings.xTiles;
+        this.Y_TILES = 'maximized' == this.operationType ? 10 : settings.yTiles;
 
         this.set_n_tiles(this.X_TILES, this.Y_TILES);
         
