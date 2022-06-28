@@ -57,6 +57,7 @@ class SettingsHandler {
         this.settings.bindProperty(Settings.BindingDirection.IN, "mass", "mass", function(){});
         this.settings.bindProperty(Settings.BindingDirection.IN, "xTiles", "xTiles", function(){});
         this.settings.bindProperty(Settings.BindingDirection.IN, "yTiles", "yTiles", function(){});
+        this.settings.bindProperty(Settings.BindingDirection.IN, "maxMin", "maxMin", function(){});
     }    
 }
 
@@ -75,8 +76,10 @@ class CompizWindowsEffectExtension {
     enable() {
         this.beginGrabOpId = global.display.connect('grab-op-begin', this.onBeginGrabOp.bind(this));
         this.endGrabOpId = global.display.connect('grab-op-end', this.onEndGrabOp.bind(this));
-        this.unmaximizeOpId = global.window_manager.connect("unmaximize", this.onUnmaximize.bind(this));
-        this.maximizeOpId = global.window_manager.connect("maximize", this.onMaximize.bind(this));
+        if (settings.maxMin) {
+            this.unmaximizeOpId = global.window_manager.connect("unmaximize", this.onUnmaximize.bind(this));
+            this.maximizeOpId = global.window_manager.connect("maximize", this.onMaximize.bind(this));
+        }
         this.tileOpId = global.window_manager.connect("tile", this.onTile.bind(this));
     }
 

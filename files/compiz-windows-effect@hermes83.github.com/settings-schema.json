@@ -46,5 +46,11 @@
     "max" : 20,
     "default" : 6,
     "step" : 1
+  },
+  "maxMin" : {
+    "type": "checkbox",
+    "description" : "Maximize And Minimize",
+    "default" : true,
+    "tooltip" : "Wobble when maximizing and minimizing a window"
   }
 }
